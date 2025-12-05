@@ -1,8 +1,8 @@
 # =============================================================================
-# SNAKEFILE - Benchmark TinyInsta (seed local)
+# SNAKEFILE - Benchmark TinyInsta avec LOCUST
 # =============================================================================
 
-APP_URL = "https://tinyints.ew.r.appspot.com"
+APP_URL = "https://tinyinsta-480307.lm.r.appspot.com"
 NB_USERS = 1000
 
 rule all:
@@ -49,19 +49,19 @@ rule test_post:
         python clear_datastore.py
         python seed.py --users 1000 --posts 10000 --follows 20
         sleep 30
-        python benchmark.py --url {APP_URL} --test post --posts 10 --prefix user --output out
+        python benchmark.py --url {APP_URL} --test post --posts 10 --output out
         
         echo ">>> [2/3] Config: 100 posts/user"
         python clear_datastore.py
         python seed.py --users 1000 --posts 100000 --follows 20
         sleep 30
-        python benchmark.py --url {APP_URL} --test post --posts 100 --prefix user --output out
+        python benchmark.py --url {APP_URL} --test post --posts 100 --output out
         
         echo ">>> [3/3] Config: 1000 posts/user"
         python clear_datastore.py
         python seed.py --users 1000 --posts 1000000 --follows 20
         sleep 60
-        python benchmark.py --url {APP_URL} --test post --posts 1000 --prefix user --output out
+        python benchmark.py --url {APP_URL} --test post --posts 1000 --output out
         """
 
 rule plot_post:
@@ -85,19 +85,19 @@ rule test_fanout:
         python clear_datastore.py
         python seed.py --users 1000 --posts 100000 --follows 10
         sleep 30
-        python benchmark.py --url {APP_URL} --test fanout --followers 10 --prefix user --output out
+        python benchmark.py --url {APP_URL} --test fanout --followers 10 --output out
         
         echo ">>> [2/3] Config: 50 followers"
         python clear_datastore.py
         python seed.py --users 1000 --posts 100000 --follows 50
         sleep 30
-        python benchmark.py --url {APP_URL} --test fanout --followers 50 --prefix user --output out
+        python benchmark.py --url {APP_URL} --test fanout --followers 50 --output out
         
         echo ">>> [3/3] Config: 100 followers"
         python clear_datastore.py
         python seed.py --users 1000 --posts 100000 --follows 100
         sleep 30
-        python benchmark.py --url {APP_URL} --test fanout --followers 100 --prefix user --output out
+        python benchmark.py --url {APP_URL} --test fanout --followers 100 --output out
         """
 
 rule plot_fanout:

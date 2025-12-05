@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Benchmark TinyInsta - Mesure les temps de réponse de l'API timeline.
+Benchmark TinyInsta avec Locust.
 
 Usage:
     python benchmark.py --url https://APP.appspot.com --test conc --output out
-    python benchmark.py --url https://APP.appspot.com --test post --posts 100 --prefix user --output out
-    python benchmark.py --url https://APP.appspot.com --test fanout --followers 50 --prefix user --output out
-    python benchmark.py --url https://APP.appspot.com --test all --output out
+    python benchmark.py --url https://APP.appspot.com --test post --posts 100 --output out
+    python benchmark.py --url https://APP.appspot.com --test fanout --followers 50 --output out
 """
 
 import subprocess
@@ -14,7 +13,6 @@ import re
 import csv
 import os
 import argparse
-import random
 import time
 import sys
 
@@ -22,56 +20,67 @@ import sys
 # Configuration
 NB_USERS = 1000
 NB_RUNS = 3
-CONCURRENCE_FIXE = 50  # Pour tests post et fanout
+CONCURRENCE_FIXE = 50
+TEST_DURATION = 60
 
 
-def run_ab(url: str, num_requests: int, concurrency: int, user: str) -> dict:
-    """Lance Apache Bench et parse les résultats."""
-    full_url = f"{url}/api/timeline?user={user}&limit=20"
+def run_locust(url: str, num_users: int, duration: int = 60) -> dict:
+    spawn_rate = min(num_users, 10)
     
     cmd = [
-        "ab",
-        "-n", str(num_requests),
-        "-c", str(concurrency),
-        "-q",
-        "-l",  # Ignore variation longueur réponse
-        full_url
+        "locust",
+        "-f", "locustfile.py",
+        "--headless",
+        "--host", url,
+        "-u", str(num_users),
+        "-r", str(spawn_rate),
+        "--run-time", f"{duration}s",
+        "--only-summary",
+        "--stop-timeout", "10"
     ]
     
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        print(f"  Locust: {num_users} users, {duration}s...", end=" ", flush=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 30)
         output = result.stdout + result.stderr
         
         temps_moyen = 0
         echecs = 0
         
-        # Parse "Time per request" (mean)
-        match = re.search(r"Time per request:\s+([\d.]+)\s+\[ms\]\s+\(mean\)", output)
-        if match:
-            temps_moyen = float(match.group(1))
+        # Parser statistiques sortie Locust
+        lines = output.split('\n')
+        for line in lines:
+            if '/api/timeline' in line and 'GET' in line:
+                parts = line.split()
+                try:
+                    if len(parts) >= 7:
+                        echecs = int(parts[3])
+                        temps_moyen = float(parts[4])
+                        break
+                except (ValueError, IndexError):
+                    continue
         
-        # Parse "Failed requests"
-        match = re.search(r"Failed requests:\s+(\d+)", output)
-        if match:
-            echecs = int(match.group(1))
+        # gérer échecs
+        if temps_moyen == 0:
+            match = re.search(r'Average.*?(\d+\.?\d*)\s*ms', output, re.IGNORECASE)
+            if match:
+                temps_moyen = float(match.group(1))
+            match = re.search(r'(\d+)\s+failed', output, re.IGNORECASE)
+            if match:
+                echecs = int(match.group(1))
         
-        # Parse "Non-2xx responses"
-        match = re.search(r"Non-2xx responses:\s+(\d+)", output)
-        if match:
-            echecs += int(match.group(1))
-        
+        print(f"Avg={temps_moyen}ms, Échecs={echecs}")
         return {"temps_moyen": round(temps_moyen, 2), "echecs": echecs}
         
     except subprocess.TimeoutExpired:
-        print("  TIMEOUT!")
-        return {"temps_moyen": -1, "echecs": num_requests}
+        print("TIMEOUT!")
+        return {"temps_moyen": -1, "echecs": -1}
     except FileNotFoundError:
-        print("ERREUR: Apache Bench (ab) non installé!")
-        print("  Ubuntu/Debian: sudo apt-get install apache2-utils")
+        print("\n❌ Locust non installé! Installez: pip install locust")
         sys.exit(1)
     except Exception as e:
-        print(f"  Erreur: {e}")
-        return {"temps_moyen": -1, "echecs": num_requests}
+        print(f"Erreur: {e}")
+        return {"temps_moyen": -1, "echecs": -1}
 
 
 def append_csv(results: list, csv_path: str, write_header: bool = False):
@@ -87,7 +96,7 @@ def append_csv(results: list, csv_path: str, write_header: bool = False):
 
 
 def write_csv(results: list, csv_path: str):
-    """Écrit les résultats dans un fichier CSV (écrase si existe)."""
+    """Écrit les résultats dans un fichier CSV """
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["PARAM", "AVG_TIME", "RUN", "FAILED"])
         writer.writeheader()
@@ -100,13 +109,8 @@ def write_csv(results: list, csv_path: str):
 # =============================================================================
 
 def test_conc(url: str, output_dir: str, prefix: str = "user"):
-    """
-    Test de montée en charge sur la concurrence.
-    Config: 1000 users, 50 posts/user, 20 followers
-    Variable: utilisateurs simultanés (1, 10, 20, 50, 100, 1000)
-    """
     print("\n" + "=" * 60)
-    print("TEST CONCURRENCE")
+    print("TEST CONCURRENCE ")
     print("=" * 60)
     
     concurrences = [1, 10, 20, 50, 100, 1000]
@@ -116,14 +120,10 @@ def test_conc(url: str, output_dir: str, prefix: str = "user"):
         print(f"\n--- {conc} utilisateurs simultanés ---")
         
         for run in range(1, NB_RUNS + 1):
-            user = f"{prefix}{random.randint(1, NB_USERS)}"
-            nb_requetes = max(100, conc * 10)
+            print(f"  Run {run}/{NB_RUNS}:", end=" ", flush=True)
             
-            print(f"  Run {run}/{NB_RUNS}: {nb_requetes} req, user={user}...", end=" ", flush=True)
-            
-            metrics = run_ab(url, nb_requetes, conc, user)
-            
-            print(f"Temps={metrics['temps_moyen']}ms, Échecs={metrics['echecs']}")
+            duration = 60 if conc >= 50 else 30
+            metrics = run_locust(url, conc, duration)
             
             results.append({
                 "PARAM": conc,
@@ -132,7 +132,7 @@ def test_conc(url: str, output_dir: str, prefix: str = "user"):
                 "FAILED": 1 if metrics['echecs'] > 0 else 0
             })
             
-            time.sleep(2)  # Pause entre les runs
+            time.sleep(5)
     
     write_csv(results, os.path.join(output_dir, "conc.csv"))
     return results
@@ -143,23 +143,15 @@ def test_conc(url: str, output_dir: str, prefix: str = "user"):
 # =============================================================================
 
 def test_post_single(url: str, output_dir: str, posts_per_user: int, prefix: str = "user"):
-    """
-    Test pour une configuration de posts donnée.
-    Ajoute les résultats au fichier post.csv existant.
-    """
+    """Test pour une configuration de posts donnée."""
     print(f"\n--- Config: {posts_per_user} posts/user ---")
     
     results = []
     
     for run in range(1, NB_RUNS + 1):
-        user = f"{prefix}{random.randint(1, NB_USERS)}"
-        nb_requetes = 500
+        print(f"  Run {run}/{NB_RUNS}:", end=" ", flush=True)
         
-        print(f"  Run {run}/{NB_RUNS}: {nb_requetes} req, conc={CONCURRENCE_FIXE}...", end=" ", flush=True)
-        
-        metrics = run_ab(url, nb_requetes, CONCURRENCE_FIXE, user)
-        
-        print(f"Temps={metrics['temps_moyen']}ms, Échecs={metrics['echecs']}")
+        metrics = run_locust(url, CONCURRENCE_FIXE, TEST_DURATION)
         
         results.append({
             "PARAM": posts_per_user,
@@ -168,12 +160,11 @@ def test_post_single(url: str, output_dir: str, posts_per_user: int, prefix: str
             "FAILED": 1 if metrics['echecs'] > 0 else 0
         })
         
-        time.sleep(2)
+        time.sleep(5)
     
-    # Append au CSV existant
     csv_path = os.path.join(output_dir, "post.csv")
     append_csv(results, csv_path)
-    print(f"  Résultats ajoutés à: {csv_path}")
+    print(f"  Résultats ajoutés: {csv_path}")
     
     return results
 
@@ -183,23 +174,15 @@ def test_post_single(url: str, output_dir: str, posts_per_user: int, prefix: str
 # =============================================================================
 
 def test_fanout_single(url: str, output_dir: str, followers: int, prefix: str = "user"):
-    """
-    Test pour une configuration de followers donnée.
-    Ajoute les résultats au fichier fanout.csv existant.
-    """
+    """Test pour une configuration de followers donnée."""
     print(f"\n--- Config: {followers} followers ---")
     
     results = []
     
     for run in range(1, NB_RUNS + 1):
-        user = f"{prefix}{random.randint(1, NB_USERS)}"
-        nb_requetes = 500
+        print(f"  Run {run}/{NB_RUNS}:", end=" ", flush=True)
         
-        print(f"  Run {run}/{NB_RUNS}: {nb_requetes} req, conc={CONCURRENCE_FIXE}...", end=" ", flush=True)
-        
-        metrics = run_ab(url, nb_requetes, CONCURRENCE_FIXE, user)
-        
-        print(f"Temps={metrics['temps_moyen']}ms, Échecs={metrics['echecs']}")
+        metrics = run_locust(url, CONCURRENCE_FIXE, TEST_DURATION)
         
         results.append({
             "PARAM": followers,
@@ -208,12 +191,11 @@ def test_fanout_single(url: str, output_dir: str, followers: int, prefix: str = 
             "FAILED": 1 if metrics['echecs'] > 0 else 0
         })
         
-        time.sleep(2)
+        time.sleep(5)
     
-    # Append au CSV existant
     csv_path = os.path.join(output_dir, "fanout.csv")
     append_csv(results, csv_path)
-    print(f"  Résultats ajoutés à: {csv_path}")
+    print(f"  Résultats ajoutés: {csv_path}")
     
     return results
 
@@ -223,20 +205,16 @@ def test_fanout_single(url: str, output_dir: str, followers: int, prefix: str = 
 # =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Benchmark TinyInsta")
-    parser.add_argument("--url", required=True, help="URL de l'app (ex: https://app.appspot.com)")
-    parser.add_argument("--test", choices=["conc", "post", "fanout", "all"], default="all",
-                        help="Type de test à exécuter")
+    parser = argparse.ArgumentParser(description="Benchmark TinyInsta avec Locust")
+    parser.add_argument("--url", required=True, help="URL de l'app")
+    parser.add_argument("--test", choices=["conc", "post", "fanout", "all"], default="all")
     parser.add_argument("--output", default="out", help="Dossier de sortie")
-    
-    # Options pour tests individuels (utilisé par Snakefile)
-    parser.add_argument("--posts", type=int, help="Nb posts/user pour test post")
-    parser.add_argument("--followers", type=int, help="Nb followers pour test fanout")
+    parser.add_argument("--posts", type=int, help="Nb posts/user (pour test post)")
+    parser.add_argument("--followers", type=int, help="Nb followers (pour test fanout)")
     parser.add_argument("--prefix", default="user", help="Préfixe des users")
     
     args = parser.parse_args()
     
-    # Créer le dossier de sortie
     os.makedirs(args.output, exist_ok=True)
     
     print("=" * 60)
@@ -245,38 +223,25 @@ def main():
     print(f"Test: {args.test}")
     print("=" * 60)
     
-    # Vérifier Apache Bench
-    try:
-        subprocess.run(["ab", "-V"], capture_output=True, check=True)
-    except FileNotFoundError:
-        print("\nERREUR: Apache Bench (ab) non installé!")
-        print("  Ubuntu/Debian: sudo apt-get install apache2-utils")
-        print("  MacOS: brew install httpd")
+    # Vérifier locustfile.py
+    if not os.path.exists("locustfile.py"):
+        print("\n❌ ERREUR: locustfile.py introuvable!")
         sys.exit(1)
     
-    # Exécuter le test demandé
     if args.test == "conc":
         test_conc(args.url, args.output, args.prefix)
-    
     elif args.test == "post":
-        if args.posts:
-            # Mode single config (appelé par Snakefile)
-            test_post_single(args.url, args.output, args.posts, args.prefix)
-        else:
-            print("ERREUR: --posts requis pour test post")
+        if not args.posts:
+            print("❌ ERREUR: --posts requis")
             sys.exit(1)
-    
+        test_post_single(args.url, args.output, args.posts, args.prefix)
     elif args.test == "fanout":
-        if args.followers:
-            # Mode single config (appelé par Snakefile)
-            test_fanout_single(args.url, args.output, args.followers, args.prefix)
-        else:
-            print("ERREUR: --followers requis pour test fanout")
+        if not args.followers:
+            print("❌ ERREUR: --followers requis")
             sys.exit(1)
-    
+        test_fanout_single(args.url, args.output, args.followers, args.prefix)
     elif args.test == "all":
-        print("\nPour lancer tous les tests, utilisez le Snakefile:")
-        print("  snakemake -j1")
+        print("\nPour lancer tous les tests, utilisez: snakemake -j1")
         sys.exit(1)
     
     print("\n" + "=" * 60)

@@ -4,7 +4,7 @@ Projet de benchmark pour l'application TinyInsta déployée sur Google App Engin
 
 ## Application déployée
 
-🔗 **https://tinyints.ew.r.appspot.com**
+🔗 **https://tinyinsta-480307.lm.r.appspot.com**
 
 ## Résultats des benchmarks
 
@@ -28,19 +28,6 @@ Configuration : 1000 utilisateurs, 50 requêtes simultanées, 100 posts/utilisat
 
 ## Exécution des benchmarks
 
-### Prérequis
-
-```bash
-# Installer les dépendances
-pip install pandas matplotlib requests google-cloud-datastore snakemake
-
-# Installer Apache Bench
-sudo apt-get install apache2-utils
-
-# Configurer gcloud
-gcloud auth application-default login
-```
-
 ### Lancer tous les tests
 
 ```bash
@@ -50,38 +37,30 @@ snakemake -j1
 ### Lancer un test spécifique
 
 ```bash
-# Test concurrence uniquement
+# Test concurrence uniquement 
 snakemake out/conc.png -j1
 
-# Test posts uniquement
+# Test posts uniquement 
 snakemake out/post.png -j1
 
-# Test fanout uniquement
+# Test fanout uniquement 
 snakemake out/fanout.png -j1
 ```
 
-### Commandes utiles
-
-```bash
-# Voir ce qui sera exécuté (dry-run)
-snakemake -n
-
-# Nettoyer les fichiers locaux
-snakemake clean
-
-# Vider le Datastore manuellement
-python clear_datastore.py
-```
-
 ## Méthodologie
+
+### Approche
+
+Ce projet utilise **Locust** pour les tests de charge, conformément aux recommandations du professeur. 
 
 ### Workflow
 
 Pour chaque configuration de test :
 1. **Vidage** du Datastore (User + Post)
-2. **Seed** des données via l'endpoint `/admin/seed`
+2. **Seed** des données via script Python local 
 3. **Attente** de 30s pour la propagation (eventual consistency)
-4. **Benchmark** avec Apache Bench (3 runs par configuration)
+4. **Benchmark** avec Locust (3 runs de 60s par configuration)
+5. **Génération** du graphique
 
 ### Configurations testées
 
@@ -91,13 +70,6 @@ Pour chaque configuration de test :
 | Post | 1000 | 10→1000 | 20 | 50 | Nb posts |
 | Fanout | 1000 | 100 | 10→100 | 50 | Nb followers |
 
-### Mesures
-
-- **Temps moyen** : `Time per request (mean)` de Apache Bench
-- **3 runs** par configuration pour calculer la variance
-- **Échecs** : comptage des requêtes non-2xx
-
-## Notes techniques
 
 ### Pourquoi vider la base entre chaque config ?
 
@@ -110,12 +82,15 @@ Pour chaque configuration de test :
 Le Datastore utilise un modèle de consistance éventuelle pour les requêtes globales.
 Un délai de 30s est ajouté après chaque seed pour laisser les données se propager.
 
-### Limitation seed 1M posts
+## Structure du projet
 
-Le seed de 1 000 000 de posts (test 1000 posts/user) peut prendre plusieurs heures.
-Si timeout, utiliser le script `seed.py` en local :
-
-```bash
-python seed.py --users 1000 --posts 1000000 --follows-min 20 --follows-max 20
 ```
-
+tinyinsta/
+├── locustfile.py          # Comportement des utilisateurs Locust
+├── benchmark.py           # Script de benchmark avec Locust
+├── Snakefile              # Workflow d'automatisation
+├── generate_plots.py      # Génération des graphiques
+├── seed.py                # Seed direct du Datastore
+├── clear_datastore.py     # Nettoyage du Datastore
+└── out/                   # Résultats (CSV + PNG)
+```

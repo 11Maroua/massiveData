@@ -11,7 +11,10 @@ from google.cloud import datastore
 import argparse
 import random
 from datetime import datetime, timedelta
+import os
 
+
+os.environ['GOOGLE_CLOUD_PROJECT'] = 'tinyinsta-480307'
 
 def seed_data(users: int, posts: int, follows: int):
     """Crée des utilisateurs et des posts directement dans Datastore."""

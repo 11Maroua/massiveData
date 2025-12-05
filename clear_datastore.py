@@ -12,7 +12,8 @@ Usage:
 from google.cloud import datastore
 import argparse
 import time
-
+import os
+os.environ['GOOGLE_CLOUD_PROJECT'] = 'tinyinsta-480307'
 
 def delete_all_entities(client: datastore.Client, kind: str, batch_size: int = 500, dry_run: bool = False):
     """Supprime toutes les entités d'un kind donné par batches."""
